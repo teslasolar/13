@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>13</title>
+<style>*{margin:0;padding:0}body{background:#000;overflow:hidden;cursor:none}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d');
+let W,H,CX,CY;
+function resize(){W=c.width=innerWidth;H=c.height=innerHeight;CX=W/2;CY=H/2;}
+resize();addEventListener('resize',resize);
+
+let actx,comp;
+function initAudio(){
+  actx=new(window.AudioContext||window.webkitAudioContext)();
+  comp=actx.createDynamicsCompressor();comp.threshold.value=-10;comp.ratio.value=12;
+  const m=actx.createGain();m.gain.value=0.4;comp.connect(m);m.connect(actx.destination);
+}
+addEventListener('click',()=>{if(!actx)initAudio();});
+addEventListener('touchstart',()=>{if(!actx)initAudio();});
+
+function hit(freq,vol,dur){
+  if(!actx)return;const t=actx.currentTime;
+  const o=actx.createOscillator();o.type="sawtooth";
+  o.frequency.setValueAtTime(freq,t);o.frequency.exponentialRampToValueAtTime(freq*0.3,t+dur);
+  const g=actx.createGain();g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  o.connect(g);g.connect(comp);o.start(t);o.stop(t+dur);
+}
+function crack(){
+  if(!actx)return;const t=actx.currentTime;
+  const b=actx.createBuffer(1,actx.sampleRate*0.08,actx.sampleRate);
+  const d=b.getChannelData(0);
+  for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/(d.length*0.02));
+  const s=actx.createBufferSource();s.buffer=b;
+  const g=actx.createGain();g.gain.value=0.5;
+  const f=actx.createBiquadFilter();f.type="highpass";f.frequency.value=2000;
+  s.connect(f);f.connect(g);g.connect(comp);s.start(t);
+}
+function dread(freq){
+  if(!actx)return;const t=actx.currentTime;
+  const o=actx.createOscillator();o.type="sine";o.frequency.value=freq;
+  const o2=actx.createOscillator();o2.type="sine";o2.frequency.value=freq+1.5; // beating
+  const g=actx.createGain();g.gain.setValueAtTime(0,t);
+  g.gain.linearRampToValueAtTime(0.04,t+2);g.gain.linearRampToValueAtTime(0,t+6);
+  o.connect(g);o2.connect(g);g.connect(comp);o.start(t);o2.start(t);o.stop(t+6);o2.stop(t+6);
+}
+
+const PRIMES=[2,3,5,7,11,13,17,19,23,29,31,37,41];
+
+const S={
+  time:0,
+  phase:"dark", // dark, counting, impact, shatter, bounce, aftermath
+  count:0,
+  countTimer:0,
+  shakeX:0,shakeY:0,
+  cracks:[],
+  shards:[],
+  impacts:[],
+  flash:0,
+  glitch:0,
+  numbers:[], // floating 13s
+  breathHold:0, // stomach drop
+  dreadTone:false,
+};
+
+function spawnCrack(cx2,cy2){
+  const branches=3+Math.floor(Math.random()*5);
+  for(let b=0;b<branches;b++){
+    const angle=Math.random()*Math.PI*2;
+    const len=30+Math.random()*150;
+    const segs=5+Math.floor(Math.random()*8);
+    const pts=[{x:cx2,y:cy2}];
+    let a=angle;
+    for(let s=0;s<segs;s++){
+      a+=((Math.random()-0.5)*0.8);
+      const d=len/segs;
+      const last=pts[pts.length-1];
+      pts.push({x:last.x+Math.cos(a)*d,y:last.y+Math.sin(a)*d});
+    }
+    S.cracks.push({pts,life:1,decay:0.001,width:1+Math.random()*2});
+  }
+}
+
+function spawnShard(cx2,cy2,count){
+  for(let i=0;i<count;i++){
+    const a=Math.random()*Math.PI*2;
+    const spd=2+Math.random()*8;
+    const sz=3+Math.random()*15;
+    const verts=3+Math.floor(Math.random()*3);
+    const shape=[];
+    for(let v=0;v<verts;v++){
+      shape.push({x:Math.cos(v/verts*Math.PI*2)*sz*(0.5+Math.random()*0.5),
+                   y:Math.sin(v/verts*Math.PI*2)*sz*(0.5+Math.random()*0.5)});
+    }
+    S.shards.push({x:cx2,y:cy2,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,
+      rot:Math.random()*Math.PI*2,rotSpd:(Math.random()-0.5)*0.3,
+      shape,life:1,decay:0.005+Math.random()*0.008,
+      color:Math.random()>0.7?[200,200,220]:[40+Math.random()*30,40+Math.random()*30,50+Math.random()*30]});
+  }
+}
+
+let lastT=0;
+function frame(now){
+  const dt=lastT?Math.min(0.05,(now-lastT)/1000):0.016;lastT=now;
+  S.time+=dt;
+
+  // PHASE MACHINE
+  if(S.phase==="dark"){
+    // 3 seconds of nothing. Pure black. Dread builds.
+    if(S.time>1&&!S.dreadTone){S.dreadTone=true;dread(38);dread(39.5);dread(57);}
+    S.breathHold=Math.min(1,S.time/3);
+    if(S.time>3){S.phase="counting";S.countTimer=0;S.count=0;}
+  }
+  else if(S.phase==="counting"){
+    // Count 1-13. Each number HITS.
+    S.countTimer+=dt;
+    const interval=Math.max(0.15,0.6-S.count*0.03); // accelerating
+    if(S.countTimer>interval&&S.count<13){
+      S.count++;S.countTimer=0;
+      S.flash=0.3+S.count*0.04;
+      S.shakeX=(Math.random()-0.5)*S.count*3;
+      S.shakeY=(Math.random()-0.5)*S.count*3;
+      hit(40+S.count*15,0.15+S.count*0.02,0.3+S.count*0.02);
+      crack();
+      // Each count adds a crack from a different angle aimed at center
+      const angle=(S.count/13)*Math.PI*2;
+      const dist=Math.min(W,H)*0.4;
+      spawnCrack(CX+Math.cos(angle)*dist*0.3,CY+Math.sin(angle)*dist*0.3);
+      // Floating number
+      S.numbers.push({val:S.count,x:CX+Math.cos(angle)*dist*0.5,y:CY+Math.sin(angle)*dist*0.5,
+        vx:Math.cos(angle)*-1,vy:Math.sin(angle)*-1,life:1,decay:0.008,size:20+S.count*3});
+      if(S.count===13){
+        setTimeout(()=>{S.phase="impact";},200);
+      }
+    }
+  }
+  else if(S.phase==="impact"){
+    // 13 hits center. EVERYTHING.
+    S.flash=1;S.glitch=1;
+    S.shakeX=(Math.random()-0.5)*60;S.shakeY=(Math.random()-0.5)*60;
+    hit(30,0.5,1);hit(60,0.4,0.8);hit(90,0.3,0.6);
+    crack();crack();crack();
+    spawnCrack(CX,CY);spawnCrack(CX,CY);spawnCrack(CX,CY);spawnCrack(CX,CY);spawnCrack(CX,CY);
+    spawnShard(CX,CY,40);
+    for(let i=0;i<13;i++){
+      const a=i/13*Math.PI*2;
+      S.impacts.push({x:CX,y:CY,radius:0,maxRadius:200+Math.random()*200,speed:3+Math.random()*3,life:1,decay:0.015});
+    }
+    S.phase="shatter";
+  }
+  else if(S.phase==="shatter"){
+    // Glass breaking. 3 seconds.
+    if(S.time>3+0.6*13+0.2+3)S.phase="bounce";
+    // Random secondary cracks
+    if(Math.random()<0.15){spawnCrack(CX+(Math.random()-0.5)*W*0.6,CY+(Math.random()-0.5)*H*0.6);crack();}
+    if(Math.random()<0.1)spawnShard(CX+(Math.random()-0.5)*200,CY+(Math.random()-0.5)*200,5);
+    S.glitch*=0.97;
+  }
+  else if(S.phase==="bounce"){
+    // The 13 bounces back. Mirror. Two prisms.
+    if(!S.bounceStarted){
+      S.bounceStarted=true;S.bounceTime=S.time;
+      // Second 13 appears — reflected — coming from the OTHER direction
+      dread(41);dread(42.5);
+    }
+    const bt=S.time-S.bounceTime;
+    if(bt<4){
+      // Reverse count — 13 going BACK
+      const reverseCount=Math.min(13,Math.floor(bt/0.25)+1);
+      if(reverseCount>S.lastReverse){
+        S.lastReverse=reverseCount;
+        const angle=((13-reverseCount)/13)*Math.PI*2+Math.PI; // opposite side
+        const dist=Math.min(W,H)*0.35;
+        S.numbers.push({val:reverseCount,x:CX+Math.cos(angle)*dist*0.5,y:CY+Math.sin(angle)*dist*0.5,
+          vx:Math.cos(angle)*1,vy:Math.sin(angle)*1,life:1,decay:0.006,size:15+reverseCount*2,
+          reflected:true});
+        hit(200-reverseCount*10,0.08,0.2);
+        S.flash=Math.max(S.flash,0.1+reverseCount*0.02);
+        S.shakeX+=(Math.random()-0.5)*reverseCount;
+        S.shakeY+=(Math.random()-0.5)*reverseCount;
+      }
+    }
+    if(bt>5)S.phase="aftermath";
+  }
+  else if(S.phase==="aftermath"){
+    // Quiet. Cracked glass. The loop visible.
+  }
+
+  S.lastReverse=S.lastReverse||0;
+  S.flash*=Math.pow(0.005,dt);if(S.flash<0.002)S.flash=0;
+  S.shakeX*=0.88;S.shakeY*=0.88;
+  S.glitch*=Math.pow(0.01,dt);
+
+  // ==================== DRAW ====================
+  x.save();
+
+  // Glitch — horizontal slice displacement
+  if(S.glitch>0.01){
+    const slices=Math.floor(S.glitch*20);
+    for(let i=0;i<slices;i++){
+      const y=Math.random()*H;
+      const h=5+Math.random()*30;
+      const dx=(Math.random()-0.5)*S.glitch*80;
+      x.drawImage(c,0,y,W,h,dx,y,W,h);
+    }
+  }
+
+  x.translate(S.shakeX,S.shakeY);
+
+  // Background — not pure black. Slightly sick.
+  const bgR=S.phase==="dark"?0:2;
+  const bgG=S.phase==="dark"?0:1;
+  x.fillStyle=`rgba(${bgR},${bgG},0,${S.phase==="dark"?1:0.15})`;
+  x.fillRect(-40,-40,W+80,H+80);
+
+  // DREAD GRADIENT — stomach drop during dark phase
+  if(S.breathHold>0){
+    const dG=x.createRadialGradient(CX,CY,0,CX,CY,Math.min(W,H)*0.5);
+    dG.addColorStop(0,`rgba(5,0,0,${S.breathHold*0.15})`);
+    dG.addColorStop(0.7,`rgba(0,0,0,0)`);
+    dG.addColorStop(1,`rgba(10,0,5,${S.breathHold*0.3})`);
+    x.fillStyle=dG;x.fillRect(-40,-40,W+80,H+80);
+  }
+
+  // THE CENTER POINT — where all 13 converge
+  if(S.phase!=="dark"){
+    const pR=4+S.flash*20;
+    x.beginPath();x.arc(CX,CY,pR,0,Math.PI*2);
+    x.fillStyle=`rgba(255,255,255,${0.03+S.flash*0.5})`;x.fill();
+  }
+
+  // CRACKS
+  S.cracks.forEach(cr=>{
+    cr.life-=cr.decay;
+    if(cr.life<=0)return;
+    x.beginPath();
+    cr.pts.forEach((p,i)=>{if(i===0)x.moveTo(p.x,p.y);else x.lineTo(p.x,p.y);});
+    const a=cr.life*0.35;
+    x.strokeStyle=`rgba(200,200,220,${a})`;x.lineWidth=cr.width*cr.life;x.stroke();
+    // Glow
+    x.strokeStyle=`rgba(255,255,255,${a*0.1})`;x.lineWidth=cr.width*cr.life+6;x.stroke();
+  });
+  S.cracks=S.cracks.filter(cr=>cr.life>0);
+
+  // SHARDS
+  S.shards.forEach(sh=>{
+    sh.x+=sh.vx;sh.y+=sh.vy;sh.vy+=0.05; // gravity
+    sh.vx*=0.995;sh.rot+=sh.rotSpd;sh.life-=sh.decay;
+    if(sh.life<=0)return;
+    x.save();x.translate(sh.x,sh.y);x.rotate(sh.rot);
+    x.beginPath();
+    sh.shape.forEach((v,i)=>{if(i===0)x.moveTo(v.x,v.y);else x.lineTo(v.x,v.y);});
+    x.closePath();
+    const c2=sh.color;
+    x.fillStyle=`rgba(${c2[0]},${c2[1]},${c2[2]},${sh.life*0.4})`;x.fill();
+    x.strokeStyle=`rgba(200,200,220,${sh.life*0.15})`;x.lineWidth=0.5;x.stroke();
+    x.restore();
+  });
+  S.shards=S.shards.filter(sh=>sh.life>0);
+
+  // IMPACT RINGS
+  S.impacts.forEach(imp=>{
+    imp.radius+=imp.speed;imp.life-=imp.decay;
+    if(imp.life<=0)return;
+    x.beginPath();x.arc(imp.x,imp.y,imp.radius,0,Math.PI*2);
+    x.strokeStyle=`rgba(255,255,255,${imp.life*0.06})`;x.lineWidth=1+imp.life*2;x.stroke();
+  });
+  S.impacts=S.impacts.filter(imp=>imp.life>0);
+
+  // FLOATING NUMBERS
+  S.numbers.forEach(n=>{
+    n.x+=n.vx;n.y+=n.vy;n.life-=n.decay;
+    if(n.life<=0)return;
+    x.font=`bold ${n.size}px 'Courier New',monospace`;x.textAlign="center";
+    if(n.reflected){
+      // Reflected numbers are dimmer, red-tinted
+      x.fillStyle=`rgba(180,30,20,${n.life*0.25})`;
+    }else{
+      // Incoming numbers are white, harsh
+      x.fillStyle=`rgba(255,255,255,${n.life*0.4})`;
+    }
+    x.fillText(n.val,n.x,n.y);
+    // Shadow
+    x.fillStyle=`rgba(255,255,255,${n.life*0.02})`;
+    x.font=`bold ${n.size*2}px 'Courier New',monospace`;
+    x.fillText(n.val,n.x,n.y);
+  });
+  S.numbers=S.numbers.filter(n=>n.life>0);
+
+  // FLASH
+  if(S.flash>0.002){
+    x.fillStyle=`rgba(255,255,255,${S.flash*0.4})`;
+    x.fillRect(-40,-40,W+80,H+80);
+  }
+
+  // THE 13 — after impact, huge, center, pulsing
+  if(S.phase==="shatter"||S.phase==="bounce"||S.phase==="aftermath"){
+    const breathe=Math.sin(S.time*2)*0.02;
+    x.font=`bold 180px 'Courier New',monospace`;x.textAlign="center";
+    x.fillStyle=`rgba(255,255,255,${0.03+breathe+S.flash*0.2})`;
+    x.fillText("13",CX,CY+60);
+    // Crack through the number
+    if(S.cracks.length>0){
+      const mainCrack=S.cracks[0];
+      if(mainCrack){
+        x.beginPath();x.moveTo(CX-40,CY-30);
+        x.lineTo(CX-10,CY+10);x.lineTo(CX+20,CY-20);x.lineTo(CX+50,CY+40);
+        x.strokeStyle=`rgba(0,0,0,${0.3+breathe})`;x.lineWidth=3;x.stroke();
+      }
+    }
+  }
+
+  // AFTERMATH TEXT
+  if(S.phase==="aftermath"){
+    x.font="9px 'Courier New',monospace";x.textAlign="center";
+    const at=S.time-(3+0.6*13+0.2+3+5);
+    if(at>2){
+      x.fillStyle=`rgba(100,100,110,${Math.min(0.06,(at-2)*0.01)})`;
+      x.fillText("two prisms facing each other",CX,H-50);
+      x.fillText("13 bounces forever",CX,H-36);
+    }
+    if(at>5){
+      x.fillStyle=`rgba(180,30,20,${Math.min(0.06,(at-5)*0.01)})`;
+      x.fillText("unless one of them stops",CX,H-16);
+    }
+  }
+
+  x.restore();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
